@@ -99,13 +99,19 @@ if uploaded_file:
                         samples_per_rev=samples_per_rev,
                         max_order=max_order
                     )
+rpm_sorted, amp_sorted = extract_order_vs_rpm(
+    orders,
+    rpms,
+    spec,
+    target_order=target_order,
+    smooth=True
+)
 
-                    order_idx = np.argmin(np.abs(orders - target_order))
-                    amp = spec[:, order_idx]
-
-                    sort_idx = np.argsort(rpms)
-
-                    ax2.plot(rpms[sort_idx], amp[sort_idx], label=name)
+ax2.plot(
+    rpm_sorted,
+    amp_sorted,
+    label=name
+)
 
                 ax2.set_xlabel("RPM")
                 ax2.set_ylabel(f"{target_order}. Order Amplitude [m/s²]")
