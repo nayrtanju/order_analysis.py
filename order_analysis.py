@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -13,16 +14,11 @@ def load_shared_strings(z):
     if "xl/sharedStrings.xml" not in z.namelist():
         return strings
 
-    for event, elem in ET.iterparse(
-        z.open("xl/sharedStrings.xml"),
-        events=("end",)
-    ):
+    for event, elem in ET.iterparse(z.open("xl/sharedStrings.xml"), events=("end",)):
         if elem.tag == NS + "si":
             texts = []
-
             for t in elem.iter(NS + "t"):
                 texts.append(t.text or "")
-
             strings.append("".join(texts))
             elem.clear()
 
@@ -33,7 +29,6 @@ def col_index(cell_ref):
     letters = re.match(r"([A-Z]+)", cell_ref).group(1)
 
     n = 0
-
     for ch in letters:
         n = n * 26 + ord(ch) - 64
 
@@ -41,72 +36,39 @@ def col_index(cell_ref):
 
 
 def read_xlsx_numeric(path):
-
     with zipfile.ZipFile(path) as z:
-
         shared = load_shared_strings(z)
 
         nrows = 0
 
         with z.open("xl/worksheets/sheet1.xml") as f:
-
-            for ev, elem in ET.iterparse(
-                f,
-                events=("start",)
-            ):
-
+            for ev, elem in ET.iterparse(f, events=("start",)):
                 if elem.tag == NS + "dimension":
-
                     ref = elem.attrib.get("ref", "")
-
-                    m = re.search(
-                        r":([A-Z]+)(\d+)",
-                        ref
-                    )
-
-                    nrows = (
-                        int(m.group(2)) - 1
-                        if m else 0
-                    )
-
+                    m = re.search(r":([A-Z]+)(\d+)", ref)
+                    nrows = int(m.group(2)) - 1 if m else 0
                     break
 
-        arr = np.empty(
-            (nrows, 5),
-            dtype=np.float64
-        )
-
+        arr = np.empty((nrows, 5), dtype=np.float64)
         headers = [None] * 5
-
         ri = -1
 
         with z.open("xl/worksheets/sheet1.xml") as f:
-
-            for ev, row in ET.iterparse(
-                f,
-                events=("end",)
-            ):
-
+            for ev, row in ET.iterparse(f, events=("end",)):
                 if row.tag != NS + "row":
                     continue
 
-                rnum = int(
-                    row.attrib.get("r", "0")
-                )
-
+                rnum = int(row.attrib.get("r", "0"))
                 vals = [np.nan] * 5
 
                 for c in row.findall(NS + "c"):
-
                     ref = c.attrib.get("r", "")
-
                     j = col_index(ref)
 
                     if j >= 5:
                         continue
 
                     typ = c.attrib.get("t")
-
                     v = c.find(NS + "v")
 
                     if v is None:
@@ -115,15 +77,8 @@ def read_xlsx_numeric(path):
                     txt = v.text
 
                     if rnum == 1:
-
-                        headers[j] = (
-                            shared[int(txt)]
-                            if typ == "s"
-                            else txt
-                        )
-
+                        headers[j] = shared[int(txt)] if typ == "s" else txt
                     else:
-
                         vals[j] = float(txt)
 
                 if rnum > 1:
@@ -135,13 +90,7 @@ def read_xlsx_numeric(path):
         return headers, arr[:ri + 1]
 
 
-def angular_resample(
-    time,
-    rpm,
-    signal,
-    samples_per_rev=512
-):
-
+def angular_resample(time, rpm, signal, samples_per_rev=512):
     mask = (
         np.isfinite(time)
         & np.isfinite(rpm)
@@ -153,60 +102,29 @@ def angular_resample(
     rpm = rpm[mask]
     signal = signal[mask]
 
-    dt = np.diff(
-        time,
-        prepend=time[0]
-    )
+    dt = np.diff(time, prepend=time[0])
 
     dt[0] = np.median(
-        np.diff(
-            time[:min(len(time), 10000)]
-        )
+        np.diff(time[:min(len(time), 10000)])
     )
 
     omega = 2 * np.pi * rpm / 60.0
+    theta = np.cumsum(omega * dt)
 
-    theta = np.cumsum(
-        omega * dt
-    )
-
-    keep = np.r_[
-        True,
-        np.diff(theta) > 0
-    ]
+    keep = np.r_[True, np.diff(theta) > 0]
 
     theta = theta[keep]
     signal = signal[keep]
     rpm = rpm[keep]
 
-    dtheta = (
-        2 * np.pi
-        / samples_per_rev
-    )
+    dtheta = 2 * np.pi / samples_per_rev
 
-    theta_u = np.arange(
-        theta[0],
-        theta[-1],
-        dtheta
-    )
+    theta_u = np.arange(theta[0], theta[-1], dtheta)
 
-    x_u = np.interp(
-        theta_u,
-        theta,
-        signal
-    )
+    x_u = np.interp(theta_u, theta, signal)
+    rpm_u = np.interp(theta_u, theta, rpm)
 
-    rpm_u = np.interp(
-        theta_u,
-        theta,
-        rpm
-    )
-
-    return (
-        theta_u,
-        x_u,
-        rpm_u
-    )
+    return theta_u, x_u, rpm_u
 
 
 def order_map(
@@ -214,24 +132,15 @@ def order_map(
     x_u,
     rpm_u,
     samples_per_rev=512,
-    revs_per_block=8,
+    revs_per_block=16,
     overlap=0.75,
-    max_order=30
+    max_order=30,
+    amplitude_mode="rms"
 ):
-
-    nper = int(
-        samples_per_rev
-        * revs_per_block
-    )
-
-    hop = max(
-        1,
-        int(nper * (1 - overlap))
-    )
+    nper = int(samples_per_rev * revs_per_block)
+    hop = max(1, int(nper * (1 - overlap)))
 
     win = np.hanning(nper)
-
-    cg = np.sum(win)
 
     orders = np.fft.rfftfreq(
         nper,
@@ -239,53 +148,58 @@ def order_map(
     )
 
     keep = orders <= max_order
-
     orders = orders[keep]
 
     specs = []
     rpms = []
 
-    for start in range(
-        0,
-        len(x_u) - nper + 1,
-        hop
-    ):
+    for start in range(0, len(x_u) - nper + 1, hop):
+        block = x_u[start:start + nper]
+        block = block - np.mean(block)
 
-        block = x_u[
-            start:start + nper
-        ]
+        X = np.fft.rfft(block * win)
 
-        block = (
-            block
-            - np.mean(block)
-        )
-
-        amp = (
-            2
-            * np.abs(
-                np.fft.rfft(
-                    block * win
-                )
+        if amplitude_mode == "rms":
+            amp = (
+                np.sqrt(2)
+                * np.abs(X)
+                / np.sqrt(np.sum(win ** 2))
             )
-            / cg
-        )
-
-        specs.append(
-            amp[keep]
-        )
-
-        rpms.append(
-            np.mean(
-                rpm_u[
-                    start:start + nper
-                ]
+        else:
+            amp = (
+                2
+                * np.abs(X)
+                / np.sum(win)
             )
-        )
 
-    return (
-        orders,
-        np.asarray(rpms),
-        np.asarray(specs)
+        specs.append(amp[keep])
+        rpms.append(np.mean(rpm_u[start:start + nper]))
+
+    return orders, np.asarray(rpms), np.asarray(specs)
+
+
+def smooth_curve(y, window_length=9, polyorder=2):
+    y = np.asarray(y)
+
+    if len(y) < window_length:
+        return y
+
+    if window_length % 2 == 0:
+        window_length += 1
+
+    if window_length >= len(y):
+        window_length = len(y) - 1
+
+    if window_length % 2 == 0:
+        window_length -= 1
+
+    if window_length < 5:
+        return y
+
+    return savgol_filter(
+        y,
+        window_length=window_length,
+        polyorder=polyorder
     )
 
 
@@ -293,22 +207,19 @@ def plot_order_map(
     orders,
     rpms,
     spec,
-    channel_name="Channel"
+    channel_name="Channel",
+    db_reference=1.0
 ):
-
     idx = np.argsort(rpms)
 
     r = rpms[idx]
-
     s = spec[idx]
 
     db = 20 * np.log10(
-        np.maximum(s, 1e-12)
+        np.maximum(s, 1e-12) / db_reference
     )
 
-    fig, ax = plt.subplots(
-        figsize=(11, 7)
-    )
+    fig, ax = plt.subplots(figsize=(11, 7))
 
     im = ax.imshow(
         db,
@@ -320,20 +231,46 @@ def plot_order_map(
             r[0],
             r[-1]
         ],
-        interpolation="nearest"
+        interpolation="nearest",
+        cmap="jet"
     )
 
     fig.colorbar(
         im,
         ax=ax,
-        label="Amplitude [dB]"
+        label="Amplitude [dB re 1 m/s²]"
     )
 
     ax.set_xlabel("Order")
     ax.set_ylabel("RPM")
-
-    ax.set_title(
-        f"Order Map - {channel_name}"
-    )
+    ax.set_title(f"Order Map - {channel_name}")
 
     return fig
+
+
+def extract_order_vs_rpm(
+    orders,
+    rpms,
+    spec,
+    target_order=10.0,
+    smooth=True
+):
+    order_idx = np.argmin(
+        np.abs(orders - target_order)
+    )
+
+    amp = spec[:, order_idx]
+
+    sort_idx = np.argsort(rpms)
+
+    rpm_sorted = rpms[sort_idx]
+    amp_sorted = amp[sort_idx]
+
+    if smooth:
+        amp_sorted = smooth_curve(
+            amp_sorted,
+            window_length=9,
+            polyorder=2
+        )
+
+    return rpm_sorted, amp_sorted
