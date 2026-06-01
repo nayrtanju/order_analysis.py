@@ -132,7 +132,7 @@ def order_map(
     x_u,
     rpm_u,
     samples_per_rev=512,
-    revs_per_block=16,
+    revs_per_block=8,
     overlap=0.75,
     max_order=30
 ):
