@@ -246,13 +246,24 @@ def extract_order_vs_rpm(
     rpms,
     spec,
     target_order=10.0,
+    width=0.15,
     smooth=True
 ):
-    order_idx = np.argmin(
-        np.abs(orders - target_order)
+    band = (
+        (orders >= target_order - width / 2)
+        &
+        (orders <= target_order + width / 2)
     )
 
-    amp = spec[:, order_idx]
+    if not np.any(band):
+        order_idx = np.argmin(
+            np.abs(orders - target_order)
+        )
+        amp = spec[:, order_idx]
+    else:
+        amp = np.sqrt(
+            np.sum(spec[:, band] ** 2, axis=1)
+        )
 
     sort_idx = np.argsort(rpms)
 
