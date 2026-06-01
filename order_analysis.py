@@ -160,7 +160,7 @@ def order_map(
         X = np.fft.rfft(block * win)
 
         amp = (
-            np.sqrt(2)
+            2
             * np.abs(X)
             / win_sum
         )
