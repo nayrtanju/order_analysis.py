@@ -159,11 +159,6 @@ def order_map(
 
         X = np.fft.rfft(block * win)
 
-        # RMS line amplitude
-        # Eski peak hesap:
-        # amp = 2 * np.abs(X) / win_sum
-        #
-        # Yeni RMS hesap:
         amp = (
             np.sqrt(2)
             * np.abs(X)
@@ -199,6 +194,44 @@ def smooth_curve(y, window_length=9, polyorder=2):
         window_length=window_length,
         polyorder=polyorder
     )
+
+
+def resample_to_rpm_step(rpm, amp, rpm_step=10):
+    rpm = np.asarray(rpm)
+    amp = np.asarray(amp)
+
+    mask = np.isfinite(rpm) & np.isfinite(amp)
+
+    rpm = rpm[mask]
+    amp = amp[mask]
+
+    if len(rpm) < 2:
+        return rpm, amp
+
+    sort_idx = np.argsort(rpm)
+
+    rpm = rpm[sort_idx]
+    amp = amp[sort_idx]
+
+    rpm_min = np.ceil(rpm[0] / rpm_step) * rpm_step
+    rpm_max = np.floor(rpm[-1] / rpm_step) * rpm_step
+
+    if rpm_max <= rpm_min:
+        return rpm, amp
+
+    rpm_grid = np.arange(
+        rpm_min,
+        rpm_max + rpm_step,
+        rpm_step
+    )
+
+    amp_grid = np.interp(
+        rpm_grid,
+        rpm,
+        amp
+    )
+
+    return rpm_grid, amp_grid
 
 
 def plot_order_map(
@@ -252,6 +285,7 @@ def extract_order_vs_rpm(
     spec,
     target_order=10.0,
     width=0.15,
+    rpm_step=10,
     smooth=True
 ):
     band = (
@@ -266,7 +300,6 @@ def extract_order_vs_rpm(
         )
         amp = spec[:, order_idx]
     else:
-        # Order band RMS energy
         amp = np.sqrt(
             np.sum(spec[:, band] ** 2, axis=1)
         )
@@ -283,4 +316,10 @@ def extract_order_vs_rpm(
             polyorder=2
         )
 
-    return rpm_sorted, amp_sorted
+    rpm_step_sorted, amp_step_sorted = resample_to_rpm_step(
+        rpm_sorted,
+        amp_sorted,
+        rpm_step=rpm_step
+    )
+
+    return rpm_step_sorted, amp_step_sorted
