@@ -160,7 +160,7 @@ def order_map(
         X = np.fft.rfft(block * win)
 
         amp = (
-            2
+            np.sqrt(2)
             * np.abs(X)
             / win_sum
         )
@@ -300,8 +300,12 @@ def extract_order_vs_rpm(
         )
         amp = spec[:, order_idx]
     else:
-        amp = np.sqrt(
-            np.sum(spec[:, band] ** 2, axis=1)
+        # TEST METHOD:
+        # Artemis Width=0.15 davranışını test etmek için
+        # band enerjisini toplamak yerine band içindeki maksimum çizgiyi alıyoruz.
+        amp = np.max(
+            spec[:, band],
+            axis=1
         )
 
     sort_idx = np.argsort(rpms)
