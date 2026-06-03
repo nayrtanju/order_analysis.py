@@ -54,6 +54,9 @@ TARGETS = {
 }
 
 
+TARGET_ORDERS = [10.0, 20.0]
+
+
 def make_excel_report(vehicle_info, results_by_order, curves_by_order):
     output = BytesIO()
 
@@ -65,7 +68,7 @@ def make_excel_report(vehicle_info, results_by_order, curves_by_order):
         )
 
         for order_value, result_df in results_by_order.items():
-            sheet_name = f"{order_value} Order Comparison"
+            sheet_name = f"{int(order_value)} Order Comparison"
             result_df.to_excel(
                 writer,
                 sheet_name=sheet_name[:31],
@@ -73,7 +76,7 @@ def make_excel_report(vehicle_info, results_by_order, curves_by_order):
             )
 
         for order_value, curve_df in curves_by_order.items():
-            sheet_name = f"{order_value} Order Curves"
+            sheet_name = f"{int(order_value)} Order Curves"
             curve_df.to_excel(
                 writer,
                 sheet_name=sheet_name[:31],
@@ -202,8 +205,7 @@ def plot_order_comparison(
     target_amp,
     vin_number,
     fuel_type,
-    axle_type,
-    cal_factor
+    axle_type
 ):
     fig, ax = plt.subplots(figsize=(12, 7))
 
@@ -223,12 +225,9 @@ def plot_order_comparison(
     )
 
     ax.set_xlabel("RPM")
-    ax.set_ylabel(
-        f"{order_value}. Order Amplitude [m/s²] Calibrated"
-    )
-
+    ax.set_ylabel(f"{int(order_value)}. Order Amplitude [m/s²]")
     ax.set_title(
-        f"{order_value}. Order vs RPM | VIN: {vin_number} | {fuel_type} | {axle_type} | Cal Factor = {cal_factor}"
+        f"{int(order_value)}. Order vs RPM | VIN: {vin_number} | {fuel_type} | {axle_type}"
     )
 
     ax.grid(True, alpha=0.3)
@@ -276,7 +275,9 @@ can_continue = (
 )
 
 if not can_continue:
-    st.warning("Please enter VIN number, select fuel type, select axle type, and upload Excel file.")
+    st.warning(
+        "Please enter VIN number, select fuel type, select axle type, and upload Excel file."
+    )
     st.stop()
 
 
@@ -293,34 +294,18 @@ info_cols[2].metric("Axle Type", axle_type)
 
 st.subheader("Analysis Settings")
 
+# Golden/default fixed analysis parameters
+samples_per_rev = 512
+revs_per_block = 8
+overlap = 0.75
+rpm_step = 10
+cal_factor = 1.0
+
 with st.expander("Advanced Settings", expanded=False):
 
     selected_channel = st.selectbox(
         "Order Map Channel",
         ["ChA", "ChB", "ChC"]
-    )
-
-    samples_per_rev = st.slider(
-        "Samples per revolution",
-        128,
-        2048,
-        512
-    )
-
-    revs_per_block = st.number_input(
-        "Revs per block",
-        min_value=2,
-        max_value=64,
-        value=8,
-        step=1
-    )
-
-    overlap = st.slider(
-        "Overlap",
-        min_value=0.0,
-        max_value=0.9,
-        value=0.75,
-        step=0.05
     )
 
     max_order = st.slider(
@@ -337,25 +322,6 @@ with st.expander("Advanced Settings", expanded=False):
         value=0.15,
         step=0.05
     )
-
-    rpm_step = st.number_input(
-        "RPM step",
-        min_value=1,
-        max_value=100,
-        value=10,
-        step=1
-    )
-
-    cal_factor = st.number_input(
-        "Amplitude Calibration Factor",
-        min_value=0.01,
-        max_value=10.0,
-        value=1.0,
-        step=0.01
-    )
-
-
-TARGET_ORDERS = [10.0, 20.0]
 
 
 if st.button("Run Order Analysis", type="primary"):
@@ -431,7 +397,7 @@ if st.button("Run Order Analysis", type="primary"):
                         else "FAIL"
                     )
 
-                    st.subheader(f"{order_value}. Order Result Summary")
+                    st.subheader(f"{int(order_value)}th Order Result Summary")
 
                     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
@@ -451,11 +417,11 @@ if st.button("Run Order Analysis", type="primary"):
                     )
 
                     kpi4.metric(
-                        f"{order_value}. Order Assessment",
+                        f"{int(order_value)}th Order Assessment",
                         order_status
                     )
 
-                    st.subheader(f"{order_value}. Order vs RPM with Target Curve")
+                    st.subheader(f"{int(order_value)}th Order vs RPM with Target Curve")
 
                     fig_cmp = plot_order_comparison(
                         order_value=order_value,
@@ -464,13 +430,12 @@ if st.button("Run Order Analysis", type="primary"):
                         target_amp=target_amp,
                         vin_number=vin_number,
                         fuel_type=fuel_type,
-                        axle_type=axle_type,
-                        cal_factor=cal_factor
+                        axle_type=axle_type
                     )
 
                     st.pyplot(fig_cmp)
 
-                    st.subheader(f"{order_value}. Order Target Compliance")
+                    st.subheader(f"{int(order_value)}th Order Target Compliance")
 
                     st.dataframe(
                         result_df,
@@ -478,9 +443,9 @@ if st.button("Run Order Analysis", type="primary"):
                     )
 
                     if order_status == "PASS":
-                        st.success(f"{order_value}. Order Assessment: PASS")
+                        st.success(f"{int(order_value)}th Order Assessment: PASS")
                     else:
-                        st.error(f"{order_value}. Order Assessment: FAIL")
+                        st.error(f"{int(order_value)}th Order Assessment: FAIL")
 
                     png_buffer = BytesIO()
                     fig_cmp.savefig(
@@ -492,7 +457,7 @@ if st.button("Run Order Analysis", type="primary"):
                     png_buffer.seek(0)
 
                     st.download_button(
-                        label=f"Download {order_value}. Order Target Comparison PNG",
+                        label=f"Download {int(order_value)}th Order Target Comparison PNG",
                         data=png_buffer,
                         file_name=f"{vin_number}_{int(order_value)}th_order_target_comparison.png",
                         mime="image/png"
@@ -588,6 +553,7 @@ if st.button("Run Order Analysis", type="primary"):
                     "Revs per Block": revs_per_block,
                     "Overlap": overlap,
                     "Calibration Factor": cal_factor,
+                    "Max Order": max_order,
                     "Overall Assessment": overall_status
                 }
 
