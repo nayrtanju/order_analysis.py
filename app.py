@@ -54,7 +54,7 @@ TARGETS = {
 }
 
 
-def make_excel_report(vehicle_info, result_df, curve_df):
+def make_excel_report(vehicle_info, results_by_order, curves_by_order):
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -64,20 +64,177 @@ def make_excel_report(vehicle_info, result_df, curve_df):
             index=False
         )
 
-        result_df.to_excel(
-            writer,
-            sheet_name="Target Comparison",
-            index=False
-        )
+        for order_value, result_df in results_by_order.items():
+            sheet_name = f"{order_value} Order Comparison"
+            result_df.to_excel(
+                writer,
+                sheet_name=sheet_name[:31],
+                index=False
+            )
 
-        curve_df.to_excel(
-            writer,
-            sheet_name="Order Curves",
-            index=False
-        )
+        for order_value, curve_df in curves_by_order.items():
+            sheet_name = f"{order_value} Order Curves"
+            curve_df.to_excel(
+                writer,
+                sheet_name=sheet_name[:31],
+                index=False
+            )
 
     output.seek(0)
     return output
+
+
+def analyze_target_order(
+    order_value,
+    time,
+    rpm,
+    channels,
+    samples_per_rev,
+    revs_per_block,
+    overlap,
+    max_order,
+    order_width,
+    rpm_step,
+    cal_factor,
+    target_rpm,
+    target_amp
+):
+    channel_curves = {}
+    peak_results = []
+
+    for name, sig in channels.items():
+
+        theta_u, x_u, rpm_u = angular_resample(
+            time,
+            rpm,
+            sig,
+            samples_per_rev=samples_per_rev
+        )
+
+        orders, rpms, spec = order_map(
+            theta_u,
+            x_u,
+            rpm_u,
+            samples_per_rev=samples_per_rev,
+            revs_per_block=revs_per_block,
+            overlap=overlap,
+            max_order=max_order
+        )
+
+        rpm_sorted, amp_sorted = extract_order_vs_rpm(
+            orders,
+            rpms,
+            spec,
+            target_order=order_value,
+            width=order_width,
+            rpm_step=rpm_step,
+            smooth=True
+        )
+
+        amp_sorted = amp_sorted * cal_factor
+
+        channel_curves[name] = {
+            "rpm": rpm_sorted,
+            "amp": amp_sorted
+        }
+
+        peak_idx = np.argmax(amp_sorted)
+        peak_rpm = float(rpm_sorted[peak_idx])
+        peak_amp = float(amp_sorted[peak_idx])
+
+        target_at_peak = float(
+            np.interp(
+                peak_rpm,
+                target_rpm,
+                target_amp
+            )
+        )
+
+        margin = peak_amp - target_at_peak
+        margin_percent = (
+            margin / target_at_peak * 100.0
+            if target_at_peak > 0
+            else np.nan
+        )
+
+        status = "PASS" if peak_amp <= target_at_peak else "FAIL"
+
+        peak_results.append({
+            "Order": order_value,
+            "Channel": name,
+            "Peak RPM": peak_rpm,
+            "Peak Amplitude [m/s²]": peak_amp,
+            "Target at Peak RPM [m/s²]": target_at_peak,
+            "Margin [m/s²]": margin,
+            "Margin [%]": margin_percent,
+            "Status": status
+        })
+
+    result_df = pd.DataFrame(peak_results)
+
+    curve_df = pd.DataFrame()
+    base_rpm = None
+
+    for name, curve in channel_curves.items():
+        if base_rpm is None:
+            base_rpm = curve["rpm"]
+            curve_df["RPM"] = base_rpm
+
+        curve_df[name] = np.interp(
+            base_rpm,
+            curve["rpm"],
+            curve["amp"]
+        )
+
+    curve_df["Target"] = np.interp(
+        curve_df["RPM"],
+        target_rpm,
+        target_amp
+    )
+
+    return channel_curves, result_df, curve_df
+
+
+def plot_order_comparison(
+    order_value,
+    channel_curves,
+    target_rpm,
+    target_amp,
+    vin_number,
+    fuel_type,
+    axle_type,
+    cal_factor
+):
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    for name, curve in channel_curves.items():
+        ax.plot(
+            curve["rpm"],
+            curve["amp"],
+            label=name
+        )
+
+    ax.plot(
+        target_rpm,
+        target_amp,
+        color="red",
+        linewidth=4,
+        label="Target Curve"
+    )
+
+    ax.set_xlabel("RPM")
+    ax.set_ylabel(
+        f"{order_value}. Order Amplitude [m/s²] Calibrated"
+    )
+
+    ax.set_title(
+        f"{order_value}. Order vs RPM | VIN: {vin_number} | {fuel_type} | {axle_type} | Cal Factor = {cal_factor}"
+    )
+
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+
+    return fig
 
 
 st.subheader("Vehicle Information")
@@ -169,13 +326,8 @@ with st.expander("Advanced Settings", expanded=False):
     max_order = st.slider(
         "Max order",
         5,
-        50,
+        80,
         30
-    )
-
-    target_order = st.number_input(
-        "Target order",
-        value=10.0
     )
 
     order_width = st.number_input(
@@ -203,6 +355,9 @@ with st.expander("Advanced Settings", expanded=False):
     )
 
 
+TARGET_ORDERS = [10.0, 20.0]
+
+
 if st.button("Run Order Analysis", type="primary"):
 
     try:
@@ -223,180 +378,127 @@ if st.button("Run Order Analysis", type="primary"):
 
         with st.spinner("Order analysis is running..."):
 
-            channel_curves = {}
-            peak_results = []
+            curves_by_order = {}
+            results_by_order = {}
+            raw_curves_by_order = {}
 
-            for name, sig in channels.items():
+            for order_value in TARGET_ORDERS:
 
-                theta_u, x_u, rpm_u = angular_resample(
-                    time,
-                    rpm,
-                    sig,
-                    samples_per_rev=samples_per_rev
-                )
-
-                orders, rpms, spec = order_map(
-                    theta_u,
-                    x_u,
-                    rpm_u,
+                channel_curves, result_df, curve_df = analyze_target_order(
+                    order_value=order_value,
+                    time=time,
+                    rpm=rpm,
+                    channels=channels,
                     samples_per_rev=samples_per_rev,
                     revs_per_block=revs_per_block,
                     overlap=overlap,
-                    max_order=max_order
-                )
-
-                rpm_sorted, amp_sorted = extract_order_vs_rpm(
-                    orders,
-                    rpms,
-                    spec,
-                    target_order=target_order,
-                    width=order_width,
+                    max_order=max_order,
+                    order_width=order_width,
                     rpm_step=rpm_step,
-                    smooth=True
+                    cal_factor=cal_factor,
+                    target_rpm=target_rpm,
+                    target_amp=target_amp
                 )
 
-                amp_sorted = amp_sorted * cal_factor
+                curves_by_order[order_value] = channel_curves
+                results_by_order[order_value] = result_df
+                raw_curves_by_order[order_value] = curve_df
 
-                channel_curves[name] = {
-                    "rpm": rpm_sorted,
-                    "amp": amp_sorted
-                }
+            overall_status = "PASS"
 
-                peak_idx = np.argmax(amp_sorted)
-                peak_rpm = float(rpm_sorted[peak_idx])
-                peak_amp = float(amp_sorted[peak_idx])
+            for result_df in results_by_order.values():
+                if not (result_df["Status"] == "PASS").all():
+                    overall_status = "FAIL"
 
-                target_at_peak = float(
-                    np.interp(
-                        peak_rpm,
-                        target_rpm,
-                        target_amp
-                    )
-                )
-
-                margin = peak_amp - target_at_peak
-                margin_percent = (
-                    margin / target_at_peak * 100.0
-                    if target_at_peak > 0
-                    else np.nan
-                )
-
-                status = "PASS" if peak_amp <= target_at_peak else "FAIL"
-
-                peak_results.append({
-                    "Channel": name,
-                    "Peak RPM": peak_rpm,
-                    "Peak Amplitude [m/s²]": peak_amp,
-                    "Target at Peak RPM [m/s²]": target_at_peak,
-                    "Margin [m/s²]": margin,
-                    "Margin [%]": margin_percent,
-                    "Status": status
-                })
-
-            result_df = pd.DataFrame(peak_results)
-
-            overall_status = (
-                "PASS"
-                if (result_df["Status"] == "PASS").all()
-                else "FAIL"
-            )
-
-            tab1, tab2, tab3 = st.tabs(
+            tab1, tab2, tab3, tab4 = st.tabs(
                 [
-                    "Target Comparison",
+                    "10th Order Target Comparison",
+                    "20th Order Target Comparison",
                     "Order Map",
                     "Raw Results"
                 ]
             )
 
-            with tab1:
+            for tab, order_value in zip([tab1, tab2], TARGET_ORDERS):
 
-                st.subheader("Result Summary")
+                with tab:
+                    result_df = results_by_order[order_value]
+                    channel_curves = curves_by_order[order_value]
 
-                kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-                kpi1.metric(
-                    "Peak ChA",
-                    f"{result_df.loc[result_df['Channel'] == 'ChA', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
-                )
-
-                kpi2.metric(
-                    "Peak ChB",
-                    f"{result_df.loc[result_df['Channel'] == 'ChB', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
-                )
-
-                kpi3.metric(
-                    "Peak ChC",
-                    f"{result_df.loc[result_df['Channel'] == 'ChC', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
-                )
-
-                kpi4.metric(
-                    "Overall Assessment",
-                    overall_status
-                )
-
-                st.subheader(f"{target_order}. Order vs RPM with Target Curve")
-
-                fig2, ax2 = plt.subplots(figsize=(12, 7))
-
-                for name, curve in channel_curves.items():
-                    ax2.plot(
-                        curve["rpm"],
-                        curve["amp"],
-                        label=name
+                    order_status = (
+                        "PASS"
+                        if (result_df["Status"] == "PASS").all()
+                        else "FAIL"
                     )
 
-                ax2.plot(
-                    target_rpm,
-                    target_amp,
-                    color="red",
-                    linewidth=4,
-                    label="Target Curve"
-                )
+                    st.subheader(f"{order_value}. Order Result Summary")
 
-                ax2.set_xlabel("RPM")
-                ax2.set_ylabel(
-                    f"{target_order}. Order Amplitude [m/s²] Calibrated"
-                )
+                    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 
-                ax2.set_title(
-                    f"{target_order}. Order vs RPM | VIN: {vin_number} | {fuel_type} | {axle_type}"
-                )
+                    kpi1.metric(
+                        "Peak ChA",
+                        f"{result_df.loc[result_df['Channel'] == 'ChA', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
+                    )
 
-                ax2.grid(True, alpha=0.3)
-                ax2.legend()
+                    kpi2.metric(
+                        "Peak ChB",
+                        f"{result_df.loc[result_df['Channel'] == 'ChB', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
+                    )
 
-                st.pyplot(fig2)
+                    kpi3.metric(
+                        "Peak ChC",
+                        f"{result_df.loc[result_df['Channel'] == 'ChC', 'Peak Amplitude [m/s²]'].iloc[0]:.2f} m/s²"
+                    )
 
-                st.subheader("Target Compliance")
+                    kpi4.metric(
+                        f"{order_value}. Order Assessment",
+                        order_status
+                    )
 
-                st.dataframe(
-                    result_df,
-                    use_container_width=True
-                )
+                    st.subheader(f"{order_value}. Order vs RPM with Target Curve")
 
-                if overall_status == "PASS":
-                    st.success("Overall Assessment: PASS")
-                else:
-                    st.error("Overall Assessment: FAIL")
+                    fig_cmp = plot_order_comparison(
+                        order_value=order_value,
+                        channel_curves=channel_curves,
+                        target_rpm=target_rpm,
+                        target_amp=target_amp,
+                        vin_number=vin_number,
+                        fuel_type=fuel_type,
+                        axle_type=axle_type,
+                        cal_factor=cal_factor
+                    )
 
-                png_buffer = BytesIO()
-                fig2.savefig(
-                    png_buffer,
-                    format="png",
-                    dpi=200,
-                    bbox_inches="tight"
-                )
-                png_buffer.seek(0)
+                    st.pyplot(fig_cmp)
 
-                st.download_button(
-                    label="Download Target Comparison PNG",
-                    data=png_buffer,
-                    file_name=f"{vin_number}_target_comparison.png",
-                    mime="image/png"
-                )
+                    st.subheader(f"{order_value}. Order Target Compliance")
 
-            with tab2:
+                    st.dataframe(
+                        result_df,
+                        use_container_width=True
+                    )
+
+                    if order_status == "PASS":
+                        st.success(f"{order_value}. Order Assessment: PASS")
+                    else:
+                        st.error(f"{order_value}. Order Assessment: FAIL")
+
+                    png_buffer = BytesIO()
+                    fig_cmp.savefig(
+                        png_buffer,
+                        format="png",
+                        dpi=200,
+                        bbox_inches="tight"
+                    )
+                    png_buffer.seek(0)
+
+                    st.download_button(
+                        label=f"Download {order_value}. Order Target Comparison PNG",
+                        data=png_buffer,
+                        file_name=f"{vin_number}_{int(order_value)}th_order_target_comparison.png",
+                        mime="image/png"
+                    )
+
+            with tab3:
 
                 st.subheader(f"Order Map - {selected_channel}")
 
@@ -452,41 +554,34 @@ if st.button("Run Order Analysis", type="primary"):
 
                 st.pyplot(fig)
 
-            with tab3:
+            with tab4:
 
-                st.subheader("Raw Curve Data")
-
-                curve_df = pd.DataFrame()
-
-                base_rpm = None
-
-                for name, curve in channel_curves.items():
-                    if base_rpm is None:
-                        base_rpm = curve["rpm"]
-                        curve_df["RPM"] = base_rpm
-
-                    curve_df[name] = np.interp(
-                        base_rpm,
-                        curve["rpm"],
-                        curve["amp"]
-                    )
-
-                curve_df["Target"] = np.interp(
-                    curve_df["RPM"],
-                    target_rpm,
-                    target_amp
-                )
+                st.subheader("10th Order Raw Curve Data")
 
                 st.dataframe(
-                    curve_df,
+                    raw_curves_by_order[10.0],
                     use_container_width=True
                 )
+
+                st.subheader("20th Order Raw Curve Data")
+
+                st.dataframe(
+                    raw_curves_by_order[20.0],
+                    use_container_width=True
+                )
+
+                st.subheader("Overall Assessment")
+
+                if overall_status == "PASS":
+                    st.success("Overall Assessment: PASS")
+                else:
+                    st.error("Overall Assessment: FAIL")
 
                 vehicle_info = {
                     "VIN": vin_number,
                     "Fuel Type": fuel_type,
                     "Axle Type": axle_type,
-                    "Target Order": target_order,
+                    "Target Orders": "10, 20",
                     "Order Width": order_width,
                     "RPM Step": rpm_step,
                     "Samples per Rev": samples_per_rev,
@@ -498,8 +593,8 @@ if st.button("Run Order Analysis", type="primary"):
 
                 excel_report = make_excel_report(
                     vehicle_info,
-                    result_df,
-                    curve_df
+                    results_by_order,
+                    raw_curves_by_order
                 )
 
                 st.download_button(
