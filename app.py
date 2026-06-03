@@ -3,6 +3,8 @@ import tempfile
 import os
 import traceback
 from io import BytesIO
+import smtplib
+from email.message import EmailMessage
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -55,6 +57,39 @@ TARGETS = {
 
 
 TARGET_ORDERS = [10.0, 20.0]
+
+
+def send_email_report(
+    to_email,
+    subject,
+    body,
+    attachment_bytes,
+    attachment_name
+):
+    msg = EmailMessage()
+    msg["From"] = st.secrets["email"]["sender"]
+    msg["To"] = to_email
+    msg["Subject"] = subject
+
+    msg.set_content(body)
+
+    msg.add_attachment(
+        attachment_bytes,
+        maintype="application",
+        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=attachment_name
+    )
+
+    with smtplib.SMTP(
+        st.secrets["email"]["smtp_server"],
+        int(st.secrets["email"]["smtp_port"])
+    ) as server:
+        server.starttls()
+        server.login(
+            st.secrets["email"]["sender"],
+            st.secrets["email"]["password"]
+        )
+        server.send_message(msg)
 
 
 def make_excel_report(vehicle_info, results_by_order, curves_by_order):
@@ -294,7 +329,6 @@ info_cols[2].metric("Axle Type", axle_type)
 
 st.subheader("Analysis Settings")
 
-# Golden/default fixed analysis parameters
 samples_per_rev = 512
 revs_per_block = 8
 overlap = 0.75
@@ -563,12 +597,50 @@ if st.button("Run Order Analysis", type="primary"):
                     raw_curves_by_order
                 )
 
+                report_filename = f"{vin_number}_order_analysis_report.xlsx"
+
                 st.download_button(
                     label="Download Excel Report",
                     data=excel_report,
-                    file_name=f"{vin_number}_order_analysis_report.xlsx",
+                    file_name=report_filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
+                st.subheader("Send Report by Email")
+
+                recipient_email = st.text_input(
+                    "Recipient email address",
+                    placeholder="example@company.com"
+                )
+
+                if st.button("Send Report by Email"):
+
+                    if recipient_email.strip() == "":
+                        st.warning("Please enter a recipient email address.")
+
+                    else:
+                        try:
+                            send_email_report(
+                                to_email=recipient_email.strip(),
+                                subject=f"Order Analysis Report - VIN {vin_number}",
+                                body=f"""
+Order analysis report is attached.
+
+VIN: {vin_number}
+Fuel Type: {fuel_type}
+Axle Type: {axle_type}
+Target Orders: 10th and 20th
+Overall Assessment: {overall_status}
+""",
+                                attachment_bytes=excel_report.getvalue(),
+                                attachment_name=report_filename
+                            )
+
+                            st.success(f"Report sent to {recipient_email}")
+
+                        except Exception:
+                            st.error("Email gönderilirken hata oluştu.")
+                            st.code(traceback.format_exc())
 
         os.remove(xlsx_path)
 
