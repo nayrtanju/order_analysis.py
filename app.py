@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from openpyxl.chart import LineChart, Reference
 from openpyxl.styles import Font, PatternFill
+from openpyxl.drawing.image import Image as XLImage
 
 
 st.set_page_config(
@@ -112,11 +112,8 @@ def format_comparison_sheet(writer, sheet_name):
         ws.column_dimensions[col_letter].width = 22
 
 
-def add_curve_chart_to_sheet(writer, sheet_name, order_value):
+def format_curve_sheet(writer, sheet_name):
     ws = writer.book[sheet_name]
-
-    max_row = ws.max_row
-    max_col = ws.max_column
 
     header_fill = PatternFill(
         start_color="D9EAF7",
@@ -132,37 +129,111 @@ def add_curve_chart_to_sheet(writer, sheet_name, order_value):
         col_letter = col[0].column_letter
         ws.column_dimensions[col_letter].width = 16
 
-    chart = LineChart()
-    chart.title = f"{int(order_value)}th Order Curves vs Target"
-    chart.style = 13
-    chart.y_axis.title = "Amplitude [m/s²]"
-    chart.x_axis.title = "RPM"
-    chart.height = 14
-    chart.width = 24
 
-    data = Reference(
-        ws,
-        min_col=2,
-        max_col=max_col,
-        min_row=1,
-        max_row=max_row
+def create_curve_plot_png(
+    curve_df,
+    order_value,
+    vin_number,
+    fuel_type,
+    axle_type
+):
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    ax.plot(
+        curve_df["RPM"],
+        curve_df["ChA"],
+        label="ChA",
+        linewidth=2
     )
 
-    categories = Reference(
-        ws,
-        min_col=1,
-        min_row=2,
-        max_row=max_row
+    ax.plot(
+        curve_df["RPM"],
+        curve_df["ChB"],
+        label="ChB",
+        linewidth=2
     )
 
-    chart.add_data(data, titles_from_data=True)
-    chart.set_categories(categories)
+    ax.plot(
+        curve_df["RPM"],
+        curve_df["ChC"],
+        label="ChC",
+        linewidth=2
+    )
 
-    ws.add_chart(chart, "G2")
+    ax.plot(
+        curve_df["RPM"],
+        curve_df["Target"],
+        label="Target Curve",
+        color="red",
+        linewidth=5
+    )
+
+    ax.set_title(
+        f"{int(order_value)}. Order vs RPM | VIN: {vin_number} | {fuel_type} | {axle_type}",
+        fontsize=16
+    )
+
+    ax.set_xlabel("RPM", fontsize=13)
+    ax.set_ylabel(
+        f"{int(order_value)}. Order Amplitude [m/s²]",
+        fontsize=13
+    )
+
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right", fontsize=12)
+
+    rpm_min = min(1000, float(curve_df["RPM"].min()))
+    rpm_max = max(4500, float(curve_df["RPM"].max()))
+    ax.set_xlim(rpm_min, rpm_max)
+
+    fig.tight_layout()
+
+    img_buffer = BytesIO()
+    fig.savefig(
+        img_buffer,
+        format="png",
+        dpi=180,
+        bbox_inches="tight"
+    )
+    plt.close(fig)
+
+    img_buffer.seek(0)
+    return img_buffer
+
+
+def add_png_plot_to_sheet(
+    writer,
+    sheet_name,
+    curve_df,
+    order_value,
+    vin_number,
+    fuel_type,
+    axle_type
+):
+    ws = writer.book[sheet_name]
+
+    img_buffer = create_curve_plot_png(
+        curve_df=curve_df,
+        order_value=order_value,
+        vin_number=vin_number,
+        fuel_type=fuel_type,
+        axle_type=axle_type
+    )
+
+    img = XLImage(img_buffer)
+
+    img.width = 900
+    img.height = 520
+
+    ws.add_image(img, "G2")
 
 
 def make_excel_report(vehicle_info, results_by_order, curves_by_order):
     output = BytesIO()
+
+    vin_number = vehicle_info["VIN"]
+    fuel_type = vehicle_info["Fuel Type"]
+    axle_type = vehicle_info["Axle Type"]
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         pd.DataFrame([vehicle_info]).to_excel(
@@ -193,10 +264,16 @@ def make_excel_report(vehicle_info, results_by_order, curves_by_order):
                 index=False
             )
 
-            add_curve_chart_to_sheet(
-                writer,
-                sheet_name,
-                order_value
+            format_curve_sheet(writer, sheet_name)
+
+            add_png_plot_to_sheet(
+                writer=writer,
+                sheet_name=sheet_name,
+                curve_df=curve_df,
+                order_value=order_value,
+                vin_number=vin_number,
+                fuel_type=fuel_type,
+                axle_type=axle_type
             )
 
     output.seek(0)
