@@ -92,10 +92,7 @@ def load_measurement_file(uploaded_file):
         temp_file = None
 
         try:
-            with tempfile.NamedTemporaryFile(
-                delete=False,
-                suffix=".xlsx"
-            ) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                 tmp.write(uploaded_file.read())
                 temp_file = tmp.name
 
@@ -134,9 +131,7 @@ def load_measurement_file(uploaded_file):
         st.stop()
 
     if data.ndim != 2 or data.shape[1] < 5:
-        st.error(
-            "Measurement file must contain at least 5 columns: Time, ChA, ChB, ChC, RPM."
-        )
+        st.error("Measurement file must contain at least 5 columns: Time, ChA, ChB, ChC, RPM.")
         st.stop()
 
     if data.shape[0] > MAX_ROWS:
@@ -174,23 +169,9 @@ def load_measurement_file(uploaded_file):
 def format_comparison_sheet(writer, sheet_name):
     ws = writer.book[sheet_name]
 
-    green_fill = PatternFill(
-        start_color="C6EFCE",
-        end_color="C6EFCE",
-        fill_type="solid"
-    )
-
-    red_fill = PatternFill(
-        start_color="FFC7CE",
-        end_color="FFC7CE",
-        fill_type="solid"
-    )
-
-    header_fill = PatternFill(
-        start_color="D9EAF7",
-        end_color="D9EAF7",
-        fill_type="solid"
-    )
+    green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    header_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
 
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -226,11 +207,7 @@ def format_comparison_sheet(writer, sheet_name):
 def format_curve_sheet(writer, sheet_name):
     ws = writer.book[sheet_name]
 
-    header_fill = PatternFill(
-        start_color="D9EAF7",
-        end_color="D9EAF7",
-        fill_type="solid"
-    )
+    header_fill = PatternFill(start_color="D9EAF7", end_color="D9EAF7", fill_type="solid")
 
     for cell in ws[1]:
         cell.font = Font(bold=True)
@@ -241,13 +218,7 @@ def format_curve_sheet(writer, sheet_name):
         ws.column_dimensions[col_letter].width = 16
 
 
-def create_curve_plot_png(
-    curve_df,
-    order_value,
-    vin_number,
-    fuel_type,
-    axle_type
-):
+def create_curve_plot_png(curve_df, order_value, vin_number, fuel_type, axle_type):
     fig, ax = plt.subplots(figsize=(14, 8))
 
     ax.plot(curve_df["RPM"], curve_df["ChA"], label="ChA", linewidth=2)
@@ -280,27 +251,14 @@ def create_curve_plot_png(
     fig.tight_layout()
 
     img_buffer = BytesIO()
-    fig.savefig(
-        img_buffer,
-        format="png",
-        dpi=180,
-        bbox_inches="tight"
-    )
+    fig.savefig(img_buffer, format="png", dpi=180, bbox_inches="tight")
     plt.close(fig)
 
     img_buffer.seek(0)
     return img_buffer
 
 
-def add_png_plot_to_sheet(
-    writer,
-    sheet_name,
-    curve_df,
-    order_value,
-    vin_number,
-    fuel_type,
-    axle_type
-):
+def add_png_plot_to_sheet(writer, sheet_name, curve_df, order_value, vin_number, fuel_type, axle_type):
     ws = writer.book[sheet_name]
 
     img_buffer = create_curve_plot_png(
@@ -481,15 +439,7 @@ def analyze_target_order(
     return channel_curves, result_df, curve_df
 
 
-def plot_order_comparison(
-    order_value,
-    channel_curves,
-    target_rpm,
-    target_amp,
-    vin_number,
-    fuel_type,
-    axle_type
-):
+def plot_order_comparison(order_value, channel_curves, target_rpm, target_amp, vin_number, fuel_type, axle_type):
     fig, ax = plt.subplots(figsize=(12, 7))
 
     for name, curve in channel_curves.items():
@@ -530,9 +480,7 @@ with col1:
         max_chars=17
     ).upper().strip()
 
-vin_valid = bool(
-    re.fullmatch(r"[A-Z0-9]{17}", vin_number)
-)
+vin_valid = bool(re.fullmatch(r"[A-Z0-9]{17}", vin_number))
 
 with col2:
     fuel_type = st.selectbox(
@@ -549,9 +497,7 @@ with col3:
     )
 
 if vin_number and not vin_valid:
-    st.error(
-        "VIN must be exactly 17 characters and contain only letters and numbers."
-    )
+    st.error("VIN must be exactly 17 characters and contain only letters and numbers.")
 
 
 st.subheader("Measurement Data")
@@ -573,13 +519,9 @@ can_continue = (
 
 if not can_continue:
     if not vin_valid:
-        st.warning(
-            "Please enter a valid 17-character VIN before selecting fuel type and uploading data."
-        )
+        st.warning("Please enter a valid 17-character VIN before selecting fuel type and uploading data.")
     else:
-        st.warning(
-            "Please select fuel type, select axle type, and upload measurement file."
-        )
+        st.warning("Please select fuel type, select axle type, and upload measurement file.")
     st.stop()
 
 
@@ -672,6 +614,34 @@ if st.button("Run Order Analysis", type="primary"):
             for result_df in results_by_order.values():
                 if not (result_df["Status"] == "PASS").all():
                     overall_status = "FAIL"
+
+            vehicle_info = {
+                "VIN": vin_number,
+                "Fuel Type": fuel_type,
+                "Axle Type": axle_type,
+                "Target Orders": "10, 20",
+                "Order Width": order_width,
+                "RPM Step": rpm_step,
+                "Samples per Rev": samples_per_rev,
+                "Revs per Block": revs_per_block,
+                "Overlap": overlap,
+                "Calibration Factor": cal_factor,
+                "Max Order": max_order,
+                "Overall Assessment": overall_status
+            }
+
+            excel_report = make_excel_report(
+                vehicle_info,
+                results_by_order,
+                raw_curves_by_order
+            )
+
+            st.download_button(
+                label="Download Excel Report",
+                data=excel_report,
+                file_name=f"{vin_number}_order_analysis_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
             tab1, tab2, tab3, tab4 = st.tabs(
                 [
@@ -787,9 +757,7 @@ if st.button("Run Order Analysis", type="primary"):
                 r = rpms[idx]
                 s = spec[idx]
 
-                db = 20 * np.log10(
-                    np.maximum(s * cal_factor, 1e-12)
-                )
+                db = 20 * np.log10(np.maximum(s * cal_factor, 1e-12))
 
                 fig, ax = plt.subplots(figsize=(12, 7))
 
@@ -838,34 +806,6 @@ if st.button("Run Order Analysis", type="primary"):
                     st.success("Overall Assessment: PASS")
                 else:
                     st.error("Overall Assessment: FAIL")
-
-                vehicle_info = {
-                    "VIN": vin_number,
-                    "Fuel Type": fuel_type,
-                    "Axle Type": axle_type,
-                    "Target Orders": "10, 20",
-                    "Order Width": order_width,
-                    "RPM Step": rpm_step,
-                    "Samples per Rev": samples_per_rev,
-                    "Revs per Block": revs_per_block,
-                    "Overlap": overlap,
-                    "Calibration Factor": cal_factor,
-                    "Max Order": max_order,
-                    "Overall Assessment": overall_status
-                }
-
-                excel_report = make_excel_report(
-                    vehicle_info,
-                    results_by_order,
-                    raw_curves_by_order
-                )
-
-                st.download_button(
-                    label="Download Excel Report",
-                    data=excel_report,
-                    file_name=f"{vin_number}_order_analysis_report.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
 
     except Exception:
         st.error("Uygulama çalışırken hata oluştu")
