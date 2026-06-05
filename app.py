@@ -34,8 +34,8 @@ except Exception:
     st.stop()
 
 
-MAX_FILE_SIZE_MB = 100
-MAX_ROWS = 500000
+MAX_FILE_SIZE_MB = 500
+MAX_ROWS = 3000000
 
 
 TARGETS = {
